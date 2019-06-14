@@ -158,6 +158,29 @@ main() {
     fi
     exec_cmd="${exec_cmd} -print_final_stats=1 -close_fd_mask=3 corpus"
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
+  elif [[ "${FUZZING_ENGINE}" == "neuzz" ]]; then
+    # Some neuzz specific stuff going on here:
+    # * Firstly we have to give a -max_len and enable -len_control.
+    #    (Deleting seeds if necessary)
+    find seeds -size +9000c -delete
+    # * Secondly, nn.py has to be run (preferably in parallel with fuzzer)
+    export ASAN_OPTIONS="symbolize=0"
+
+    local exec_cmd="${binary} ${BINARY_RUNTIME_OPTIONS}"
+    exec_cmd="${exec_cmd} -workers=${JOBS} -jobs=100000000 -runs=${MAX_RUNS}"
+    exec_cmd="${exec_cmd} -max_total_time=${MAX_TOTAL_TIME}"
+    if ls ./*.dict; then
+      local dict_path="$(find . -maxdepth 1 -name "*.dict" | head -n 1)"
+      exec_cmd="${exec_cmd} -dict=${dict_path}"
+    fi
+    exec_cmd="${exec_cmd} -print_final_stats=1 -close_fd_mask=3 corpus"
+    exec_cmd="${exec_cmd} -max_len=9000 -len_control=1"
+
+    python nn.py ./*-afl &
+    # sleep a second to let nn.py kick in
+    sleep 1
+
+    [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
   else
     echo "Error: Unsupported fuzzing engine ${FUZZING_ENGINE}"
     exit 1

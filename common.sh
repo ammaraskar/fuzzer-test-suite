@@ -1,13 +1,14 @@
 #!/bin/bash
 # Copyright 2017 Google Inc. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
+set -x
 
 # Don't allow to call these scripts from their directories.
 [ -e $(basename $0) ] && echo "PLEASE USE THIS SCRIPT FROM ANOTHER DIR" && exit 1
 
 # Ensure that fuzzing engine, if defined, is valid
 FUZZING_ENGINE=${FUZZING_ENGINE:-"fsanitize_fuzzer"}
-POSSIBLE_FUZZING_ENGINE="libfuzzer afl coverage fsanitize_fuzzer hooks"
+POSSIBLE_FUZZING_ENGINE="libfuzzer afl coverage fsanitize_fuzzer hooks neuzz"
 !(echo "$POSSIBLE_FUZZING_ENGINE" | grep -w "$FUZZING_ENGINE" > /dev/null) && \
   echo "USAGE: Error: If defined, FUZZING_ENGINE should be one of the following:
   $POSSIBLE_FUZZING_ENGINE. However, it was defined as $FUZZING_ENGINE" && exit 1
@@ -61,6 +62,7 @@ get_svn_revision() {
 }
 
 build_afl() {
+  echo "build_afl()"
   $CC $CFLAGS -c -w $AFL_SRC/llvm_mode/afl-llvm-rt.o.c
   $CXX $CXXFLAGS -std=c++11 -O2 -c ${LIBFUZZER_SRC}/afl/afl_driver.cpp -I$LIBFUZZER_SRC
   ar r $LIB_FUZZING_ENGINE afl_driver.o afl-llvm-rt.o.o
@@ -70,6 +72,14 @@ build_afl() {
 build_libfuzzer() {
   $LIBFUZZER_SRC/build.sh
   mv libFuzzer.a $LIB_FUZZING_ENGINE
+}
+
+build_neuzz() {
+  $LIBFUZZER_SRC/neuzz/build.sh
+  mv libFuzzer.a $LIB_FUZZING_ENGINE
+  # Copy nn.py and afl-showmap
+  cp $LIBFUZZER_SRC/nn.py .
+  cp $LIBFUZZER_SRC/afl-showmap .
 }
 
 # Uses the capability for "fsanitize=fuzzer" in the current clang
@@ -92,5 +102,11 @@ build_hooks() {
 build_fuzzer() {
   echo "Building with $FUZZING_ENGINE"
   build_${FUZZING_ENGINE}
+#  if [[ $FUZZING_ENGINE == "neuzz" ]]; then
+#    echo "Also building with afl"
+#    # Do an afl build since neuzz needs the AFL instrumented bin as well
+#    LIB_FUZZING_ENGINE="libFuzzingEngine-afl.a" build_afl
+#    echo "Done"
+#  fi
 }
 
