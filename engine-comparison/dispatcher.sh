@@ -139,8 +139,22 @@ download_engine() {
 
         (cd "${LIBFUZZER_SRC}"; wget https://storage.googleapis.com/experiment-data/neuzz.tar.gz)
         (cd "${LIBFUZZER_SRC}"; tar xvzf neuzz.tar.gz)
-        mkdir -p "${AFL_SRC}"
-        (cd "${AFL_SRC}" && get_afl)
+
+        # Acquire afl as part of neuzz
+        if [[ ! -d "${LIBFUZZER_SRC}/afl" ]]; then
+          mkdir -p "${LIBFUZZER_SRC}/afl"
+          svn co \
+            http://llvm.org/svn/llvm-project/compiler-rt/trunk/lib/fuzzer/afl \
+            "${LIBFUZZER_SRC}/afl"
+        fi
+        if [[ ! -f "${AFL_SRC}/afl-fuzz" ]]; then
+          mkdir -p "${AFL_SRC}"
+          (cd "${AFL_SRC}" && get_afl)
+          export AFL_REVISION="$("${AFL_SRC}/afl-fuzz" \
+            | grep "afl-fuzz.*by" \
+            | cut -d " " -f 2 \
+            | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")"
+        fi
       fi
       ;;
     libfuzzer)
@@ -230,6 +244,7 @@ package_benchmark_fuzzer() {
   [[ "${FUZZING_ENGINE}" == "afl" ]] && cp "${AFL_SRC}/afl-fuzz" "${send_dir}"
   [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/nn.py" "${send_dir}"
   [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/afl-showmap" "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/"*-afl "${send_dir}"
 }
 
 # Starts a runner VM
