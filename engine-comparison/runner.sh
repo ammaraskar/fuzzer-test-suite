@@ -83,6 +83,10 @@ conduct_experiment() {
       rsync_no_delete corpus-archives "${sync_dir}/corpus"
     fi
 
+    # Copy nn.py log
+    cp /tmp/nn-log results/ || true
+    echo "Hello World!" > results/test-file
+
     rsync_no_delete results "${sync_dir}/results"
 
     # Done with snapshot
@@ -160,10 +164,15 @@ main() {
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
   elif [[ "${FUZZING_ENGINE}" == "neuzz" ]]; then
     # Some neuzz specific stuff going on here:
+    chmod 750 afl-showmap
+    chmod 750 ./*-afl
     # * Firstly we have to give a -max_len and enable -len_control.
     #    (Deleting seeds if necessary)
     find seeds -size +9000c -delete
     # * Secondly, nn.py has to be run (preferably in parallel with fuzzer)
+    # * Thirdly, we copy the corpus to seeds0 in order to feed neuzz some
+    #   initial information.
+
     export ASAN_OPTIONS="symbolize=0"
 
     local exec_cmd="${binary} ${BINARY_RUNTIME_OPTIONS}"
@@ -176,9 +185,14 @@ main() {
     exec_cmd="${exec_cmd} -print_final_stats=1 -close_fd_mask=3 corpus"
     exec_cmd="${exec_cmd} -max_len=9000 -len_control=1"
 
-    python nn.py ./*-afl &
+    mkdir -p /tmp/
+    echo "Starting nn.py" > /tmp/nn-log
+    python nn.py ./*-afl >> /tmp/nn-log 2>&1 &
     # sleep a second to let nn.py kick in
     sleep 1
+    # give neuzz some initial data in a bit as well as feeding it the
+    # latest data every hour
+    (while sleep 50m; do rm -rf seeds0; cp -r corpus seeds0; find seeds0 -size +9000c delete; done) &
 
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
   else

@@ -250,7 +250,7 @@ package_benchmark_fuzzer() {
 # Starts a runner VM
 create_or_start_runner() {
   local instance_name=$1
-  local metadata="benchmark=$2,fengine=$3,trial=$4,experiment=${EXPERIMENT}"
+  local metadata="benchmark=$2,fengine=$3,trial=$4,experiment=${EXPERIMENT},serial-port-enable=1"
   metadata="${metadata},bucket=${GSUTIL_BUCKET}"
   local startup_script="/tmp/${instance_name}-start-docker.sh"
   {
