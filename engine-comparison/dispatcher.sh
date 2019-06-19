@@ -161,7 +161,7 @@ download_engine() {
       if [[ ! -d "${LIBFUZZER_SRC}/standalone" ]]; then
         echo "Checking out libFuzzer"
         export LIBFUZZER_REVISION="$( \
-          svn co http://llvm.org/svn/llvm-project/compiler-rt/trunk/lib/fuzzer \
+          svn co --revision r322380 http://llvm.org/svn/llvm-project/compiler-rt/trunk/lib/fuzzer \
           "${LIBFUZZER_SRC}" \
           | grep "Checked out revision" \
           | grep -o "[0-9]*")"

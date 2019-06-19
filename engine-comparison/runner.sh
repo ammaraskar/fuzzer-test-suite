@@ -51,7 +51,7 @@ conduct_experiment() {
   rm -rf corpus last-corpus corpus-archives results crashes
   mkdir -p corpus last-corpus corpus-archives results crashes
 
-  ${exec_cmd} &
+  ${exec_cmd} > /tmp/fuzzer-log 2>&1 &
   local process_pid=$!
   SECONDS=0  # Builtin that automatically increments every second
   while kill -0 "${process_pid}"; do
@@ -85,7 +85,8 @@ conduct_experiment() {
 
     # Copy nn.py log
     cp /tmp/nn-log results/ || true
-    echo "Hello World!" > results/test-file
+    # Copy tail of fuzzer log
+    tail /tmp/fuzzer-log results/ -n 50000 > results/fuzzer-log || true
 
     rsync_no_delete results "${sync_dir}/results"
 
@@ -190,9 +191,6 @@ main() {
     python nn.py ./*-afl >> /tmp/nn-log 2>&1 &
     # sleep a second to let nn.py kick in
     sleep 1
-    # give neuzz some initial data in a bit as well as feeding it the
-    # latest data every hour
-    (while sleep 50m; do rm -rf seeds0; cp -r corpus seeds0; find seeds0 -size +9000c delete; done) &
 
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
   else

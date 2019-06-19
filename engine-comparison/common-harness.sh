@@ -73,7 +73,7 @@ gcloud_create() {
     gcloud compute instances create "${instance_name}" \
       --image-family="cos-stable"  --image-project="cos-cloud" \
       --network=runner-net --no-address \
-      --machine-type="n1-standard-2" --scopes="compute-rw,storage-rw,default" \
+      --machine-type="n1-standard-4" --scopes="compute-rw,storage-rw,default" \
       --service-account="${service_account}" --zone="${zone}" \
       ${metadata_cmd} ${metadata_ff_cmd}
   fi
