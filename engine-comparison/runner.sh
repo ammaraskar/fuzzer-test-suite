@@ -87,6 +87,9 @@ conduct_experiment() {
     cp /tmp/nn-log results/ || true
     # Copy tail of fuzzer log
     tail /tmp/fuzzer-log results/ -n 50000 > results/fuzzer-log || true
+    # Copy these files if they exist
+    mkdir -p results/all-fuzz-logs/
+    cp ./fuzz-*.log results/all-fuzz-logs/ || true
 
     rsync_no_delete results "${sync_dir}/results"
 
@@ -166,7 +169,7 @@ main() {
   elif [[ "${FUZZING_ENGINE}" == "neuzz" ]]; then
     # Some neuzz specific stuff going on here:
     chmod 750 afl-showmap
-    chmod 750 ./*-afl
+    chmod 750 ./*-afl*
     # * Firstly we have to give a -max_len and enable -len_control.
     #    (Deleting seeds if necessary)
     find seeds -size +9000c -delete
@@ -188,9 +191,9 @@ main() {
 
     mkdir -p /tmp/
     echo "Starting nn.py" > /tmp/nn-log
-    python nn.py ./*-afl >> /tmp/nn-log 2>&1 &
-    # sleep a second to let nn.py kick in
-    sleep 1
+    python nn.py ./*-afl* >> /tmp/nn-log 2>&1 &
+    # sleep a few seconds to let nn.py kick in
+    sleep 10
 
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
   else

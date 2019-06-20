@@ -244,7 +244,7 @@ package_benchmark_fuzzer() {
   [[ "${FUZZING_ENGINE}" == "afl" ]] && cp "${AFL_SRC}/afl-fuzz" "${send_dir}"
   [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/nn.py" "${send_dir}"
   [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/afl-showmap" "${send_dir}"
-  [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/"*-afl "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "neuzz" ]] && cp "${building_dir}/${fuzzer_name/neuzz/afl}" "${send_dir}"
 }
 
 # Starts a runner VM
