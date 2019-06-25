@@ -34,12 +34,33 @@ exec_in_clean_env() {
   env -i bash -c "${set_path_cmd} && ${cmd}"
 }
 
+exec_in_angora_env() {
+  local cmd=$1
+  local set_path_cmd="export PATH=$HOME/.cargo/bin:/llvm/bin:/usr/bin:/bin:/usr/local/bin LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+  env -i bash -c "${set_path_cmd} && ${cmd}"
+}
+
 get_afl() {
   echo "Building AFL"
   wget http://lcamtuf.coredump.cx/afl/releases/afl-latest.tgz
   tar xf afl-latest.tgz --strip-components=1
   rm afl-latest.tgz
   make clean all
+}
+
+build_angora() {
+  echo "Building Angora..."
+  # Grab rust if we don't have it
+  curl https://sh.rustup.rs -sSf | sh -s -- -y
+  # Grab the required version of LLVM
+  wget https://storage.googleapis.com/experiment-data/clang%2Bllvm-7.0.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz -O /tmp/llvm.tar.xz
+  mkdir -p /llvm
+  tar xf /tmp/llvm.tar.xz --strip-components=1 -C /llvm
+
+  export PATH="$HOME/.cargo/bin:/llvm/bin:$PATH"
+  export LD_LIBRARY_PATH="/llvm/lib:$LD_LIBRARY_PATH"
+  # Reset CC, CXX, CFLAGS and CXXFLAGS for this command
+  (cd "${ANGORA_SRC}" && env -u CC -u CXX -u CFLAGS -u CXXFLAGS ./build/build.sh)
 }
 
 # Creates index.html in the specified directory with links to graphs for each
@@ -132,6 +153,28 @@ download_engine() {
 
   . "${fengine_config}"
   case "${FUZZING_ENGINE}" in
+    angora)
+      if [[ ! -d "${ANGORA_SRC}" ]]; then
+        echo "Checking out Angora"
+        git clone https://github.com/AngoraFuzzer/Angora.git "${ANGORA_SRC}"
+      fi
+
+      echo "Grabbing AFL as part of Angora"
+      mkdir -p "${AFL_SRC}"
+      (cd "${AFL_SRC}" && get_afl)
+
+      build_angora
+
+      echo "Grabbing libFuzzer as part of Angora"
+      if [[ ! -d "${LIBFUZZER_SRC}/standalone" ]]; then
+        echo "Checking out libFuzzer"
+        export LIBFUZZER_REVISION="$( \
+          svn co http://llvm.org/svn/llvm-project/compiler-rt/trunk/lib/fuzzer \
+          "${LIBFUZZER_SRC}" \
+          | grep "Checked out revision" \
+          | grep -o "[0-9]*")"
+      fi
+      ;;
     libfuzzer)
       if [[ ! -d "${LIBFUZZER_SRC}/standalone" ]]; then
         echo "Checking out libFuzzer"
@@ -175,8 +218,16 @@ build_benchmark() {
   rm -rf "${building_dir}"
   mkdir "${building_dir}"
 
+  local engine=$(. ${fengine_config}; echo "$FUZZING_ENGINE")
+
   local build_cmd=". ${fengine_config} && ${WORK}/FTS/${benchmark}/build.sh"
-  (cd "${building_dir}" && exec_in_clean_env "${build_cmd}")
+  # Also build the fast angora binary as part of the angora build
+  if [[ "$engine" == "angora" ]]; then
+    (cd "${building_dir}" && exec_in_angora_env "${build_cmd}")
+    (cd "${building_dir}" && exec_in_angora_env "FUZZING_ENGINE=angorafast ${WORK}/FTS/${benchmark}/build.sh")
+  else
+    (cd "${building_dir}" && exec_in_clean_env "${build_cmd}")
+  fi
 }
 
 package_benchmark_fuzzer() {
@@ -211,6 +262,10 @@ package_benchmark_fuzzer() {
     cp "${building_dir}"/*.dict "${send_dir}"
 
   [[ "${FUZZING_ENGINE}" == "afl" ]] && cp "${AFL_SRC}/afl-fuzz" "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "angora" ]] && cp -r "${ANGORA_SRC}" "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "angora" ]] && ls "${building_dir}"
+  [[ "${FUZZING_ENGINE}" == "angora" ]] && cp "${building_dir}/${fuzzer_name/angora/angorafast}" \
+    "${send_dir}/${benchmark}${fuzzer_suffix}-${FUZZING_ENGINE/angora/angorafast}"
 }
 
 # Starts a runner VM
@@ -222,7 +277,7 @@ create_or_start_runner() {
   {
     echo "#!/bin/bash"
     echo "while ! docker run --rm -e INSTANCE_NAME=${instance_name} \\"
-    echo "  --cap-add SYS_PTRACE --name=runner-container \\"
+    echo "  --cap-add SYS_PTRACE --privileged --name=runner-container \\"
     echo "  gcr.io/fuzzer-test-suite/runner /work/startup-runner.sh"
     echo "do"
     echo "  echo 'Error pulling image, retrying...'"
@@ -243,6 +298,9 @@ handle_benchmark() {
 
   while read fuzzer_name; do
     local fuzzer_suffix="${fuzzer_name#${benchmark}-${FUZZING_ENGINE}}"
+    if [[ "$fuzzer_suffix" == "fast*" ]]; then
+      continue
+    fi
     local bmark_fuzzer="${benchmark}${fuzzer_suffix}"
     local send_dir="${WORK}/send/${bmark_fuzzer}-${fengine_name}"
     package_benchmark_fuzzer "${benchmark}" "${fuzzer_name}" \

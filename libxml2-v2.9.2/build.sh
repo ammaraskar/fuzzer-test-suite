@@ -10,12 +10,15 @@ build_lib() {
   (cd BUILD && ./autogen.sh && CCLD="$CXX $CXXFLAGS" ./configure && make -j $JOBS)
 }
 
+export ANGORA_TAINT_RULE_LIST=$(realpath "$SCRIPT_DIR/angora_abilist.txt")
+
 get_git_tag https://gitlab.gnome.org/GNOME/libxml2.git v2.9.2 SRC
 get_git_revision https://github.com/mcarpenter/afl be3e88d639da5350603f6c0fee06970128504342 afl
 build_lib
 build_fuzzer
 
 cp afl/dictionaries/xml.dict .
+
 
 if [[ $FUZZING_ENGINE == "hooks" ]]; then
   # Link ASan runtime so we can hook memcmp et al.

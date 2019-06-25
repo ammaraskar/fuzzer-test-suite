@@ -51,7 +51,12 @@ conduct_experiment() {
   rm -rf corpus last-corpus corpus-archives results crashes
   mkdir -p corpus last-corpus corpus-archives results crashes
 
-  ${exec_cmd} &
+  # Angora doesn't like the output directory existing when it starts
+  if [[ "$FUZZING_ENGINE" == "angora" ]]; then
+    rm -rf corpus
+  fi
+
+  ${exec_cmd} > /tmp/fuzzer-log 2>&1 &
   local process_pid=$!
   SECONDS=0  # Builtin that automatically increments every second
   while kill -0 "${process_pid}"; do
@@ -82,6 +87,12 @@ conduct_experiment() {
       tar -czf "corpus-archives/corpus-archive-${cycle}.tar.gz" corpus-copy
       rsync_no_delete corpus-archives "${sync_dir}/corpus"
     fi
+
+    # copy the main fuzzer log
+    cp /tmp/fuzzer-log results/fuzzer-log || true
+    # copy these files if they exist
+    mkdir -p results/all-fuzz-logs/
+    cp ./fuzz-*.log results/all-fuzz-logs/ || true
 
     rsync_no_delete results "${sync_dir}/results"
 
@@ -158,6 +169,30 @@ main() {
     fi
     exec_cmd="${exec_cmd} -print_final_stats=1 -close_fd_mask=3 corpus"
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
+  elif [[ "${FUZZING_ENGINE}" == "angora" ]]; then
+    # download clang and set up the path appropriately
+    curl https://storage.googleapis.com/experiment-data/clang%2Bllvm-7.0.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz -o /tmp/llvm.tar.xz
+    mkdir -p /llvm
+    tar xf /tmp/llvm.tar.xz --strip-components=1 -C /llvm
+    rm /tmp/llvm.tar.xz
+
+    # disable core dumps
+    echo core | tee /proc/sys/kernel/core_pattern
+
+    export PATH="$HOME/.cargo/bin:/llvm/bin:$PATH"
+    export LD_LIBRARY_PATH="/llvm/lib:$LD_LIBRARY_PATH"
+
+    # +x the angora-fuzzer binary, the taint tracking build and fast build
+    chmod 750 Angora/angora_fuzzer
+    chmod 750 ./*-angora*
+    chmod 750 Angora/target/*/fuzzer Angora/target/*/parse_track_file Angora/target/*/speed_test
+
+    # Angora requires some starter input
+    [[ ! -d seeds ]] && mkdir seeds
+    [[ ! $(find seeds -type f) ]] && echo > ./seeds/nil_seed
+
+    local exec_cmd="Angora/angora_fuzzer -M 0 -i seeds -o corpus"
+    exec_cmd="${exec_cmd} -t ${binary} -- ${binary/angora/angorafast}"
   else
     echo "Error: Unsupported fuzzing engine ${FUZZING_ENGINE}"
     exit 1
