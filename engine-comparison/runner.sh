@@ -48,10 +48,14 @@ conduct_experiment() {
   local sync_dir="${GSUTIL_BUCKET}/${EXPERIMENT}/experiment-folders"
   sync_dir="${sync_dir}/${bmark_fengine_dir}/trial-${trial_num}"
 
-  rm -rf corpus last-corpus corpus-archives results crashes
-  mkdir -p corpus last-corpus corpus-archives results crashes
+  rm -rf last-corpus corpus-archives results crashes
+  mkdir -p last-corpus corpus-archives results crashes
+  if [[ "$FUZZING_ENGINE" != "qsym" ]]; then
+    rm -rf corpus
+    mkdir -p corpus
+  fi
 
-  ${exec_cmd} &
+  ${exec_cmd} > /tmp/fuzzer-log 2>&1 &
   local process_pid=$!
   SECONDS=0  # Builtin that automatically increments every second
   while kill -0 "${process_pid}"; do
@@ -59,11 +63,23 @@ conduct_experiment() {
     local sleep_time=$((next_sync - SECONDS))
     sleep ${sleep_time}
 
+    # qsym runs slave afl nodes, copy their outputs out
+    if [[ "$FUZZING_ENGINE" == "qsym" ]]; then
+      rm -rf corpus/crashes
+      rm -rf corpus/hangs
+      rm -rf corpus/queue
+      ls corpus/afl-master/
+      cp -r corpus/afl-master/crashes corpus/ || true
+      cp -r corpus/afl-master/hangs corpus/ || true
+      cp -r corpus/afl-master/queue corpus/ || true
+      cp corpus/afl-master/fuzzer_stats corpus/ || true
+    fi
+
     # Delete most crashes and logs to save disk space.
     find . -name "fuzz-[1-9][0-9]*.log" -delete
     if [[ -z "$(ls -A crashes)" ]]; then
-      mv corpus/crashes/* corpus/hangs/* crashes/
-      mv crash-* leak* timeout* oom* crashes/
+      mv corpus/crashes/* corpus/hangs/* crashes/ || true
+      mv crash-* leak* timeout* oom* crashes/ || true
       if [[ -n "$(ls -A crashes)" ]]; then
         cp fuzz-0.log crashes/* results/
         echo "${cycle}" >> results/first-crash-cycle
@@ -71,6 +87,14 @@ conduct_experiment() {
     else
       rm -rf crash-* leak* timeout* oom*
     fi
+
+    # copy fuzzer logs
+    cp /tmp/*-log results/ || true
+    # copy individual fuzz logs if they exist
+    mkdir -p results/all-fuzz-logs/
+    cp ./fuzz-*.log results/all-fuzz-logs/ || true
+    # copy qsym files if they exist
+    cp -r /tmp/*/qsym-out-* results/all-fuzz-logs/ || true
 
     # Snapshot
     cp -r corpus corpus-copy
@@ -105,6 +129,14 @@ conduct_experiment() {
   # Sync final corpus
   tar -czf "corpus-archives/corpus-archive-${cycle}.tar.gz" corpus
   rsync_no_delete corpus-archives "${sync_dir}/corpus"
+
+  # copy fuzzer logs
+  cp /tmp/*-log results/ || true
+  # copy individual fuzz logs if they exist
+  mkdir -p results/all-fuzz-logs/
+  cp ./fuzz-*.log results/all-fuzz-logs/ || true
+  # copy qsym files if they exist
+  cp -r /tmp/*/qsym-out-* results/all-fuzz-logs/ || true
 
   # Sync final fuzz log
   echo "${exec_cmd}" > command-line.txt
@@ -158,6 +190,46 @@ main() {
     fi
     exec_cmd="${exec_cmd} -print_final_stats=1 -close_fd_mask=3 corpus"
     [[ -d seeds ]] && exec_cmd="${exec_cmd} seeds"
+  elif [[ "${FUZZING_ENGINE}" == "qsym" ]]; then
+    chmod 750 afl-fuzz
+    chmod 750 afl-showmap
+    chmod 750 ${binary/qsym/afl}
+
+    echo "blank file" > fuzz-0.log
+    mkdir -p corpus
+
+    # AFL requires some starter input
+    [[ ! -d seeds ]] && mkdir seeds
+    [[ ! $(find seeds -type f) ]] && echo > ./seeds/nil_seed
+
+    # AFL doesn't work with inputs >1MB.
+    find seeds -size +1M -delete
+
+    # Some kernel settings for qsym and AFL
+    echo 0 | tee /proc/sys/kernel/yama/ptrace_scope
+    echo core | tee /proc/sys/kernel/core_pattern
+
+    export AFL_SKIP_CPUFREQ=1
+    export AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1
+    export ASAN_OPTIONS="abort_on_error=1:symbolize=0"
+
+    local afl_cmd="./afl-fuzz -M afl-master ${BINARY_RUNTIME_OPTIONS} -i seeds -o corpus"
+    local afl_slave_cmd="./afl-fuzz -S afl-slave ${BINARY_RUNTIME_OPTIONS} -i seeds -o corpus"
+    if ls ./*.dict; then
+      local dict_path="$(find . -maxdepth 1 -name "*.dict" | head -n 1)"
+      afl_cmd="${afl_cmd} -x ${dict_path}@9"
+      afl_slave_cmd="${afl_slave_cmd} -x ${dict_path}@9"
+    fi
+    afl_cmd="${afl_cmd} -m none -- ${binary/qsym/afl}"
+    afl_slave_cmd="${afl_slave_cmd} -m none -- ${binary/qsym/afl}"
+
+    # Run a master AFL in the background
+    ${afl_cmd} > /tmp/afl-master-log 2>&1 &
+    ${afl_slave_cmd} > /tmp/afl-slave-log 2>&1 &
+    # let afl master kick in
+    sleep 10
+
+    local exec_cmd="/workdir/qsym/bin/run_qsym_afl.py -a afl-slave -o corpus -n qsym -- ${binary} @@"
   else
     echo "Error: Unsupported fuzzing engine ${FUZZING_ENGINE}"
     exit 1

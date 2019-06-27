@@ -1,4 +1,7 @@
-FROM gcr.io/gcp-runtimes/ubuntu_16_0_4:latest
+# base is the docker image created from qsym repo
+FROM gcr.io/fuzzer-evaluator/qsym
+
+RUN apt install -y curl
 
 RUN echo "deb http://packages.cloud.google.com/apt cloud-sdk-xenial main" >> \
     /etc/apt/sources.list

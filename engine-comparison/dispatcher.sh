@@ -132,6 +132,23 @@ download_engine() {
 
   . "${fengine_config}"
   case "${FUZZING_ENGINE}" in
+    qsym)
+      echo "Checking out afl as part of QSYM"
+      if [[ ! -d "${LIBFUZZER_SRC}/afl" ]]; then
+        mkdir -p "${LIBFUZZER_SRC}/afl"
+        svn co \
+          http://llvm.org/svn/llvm-project/compiler-rt/trunk/lib/fuzzer/afl \
+          "${LIBFUZZER_SRC}/afl"
+      fi
+      if [[ ! -f "${AFL_SRC}/afl-fuzz" ]]; then
+        mkdir -p "${AFL_SRC}"
+        (cd "${AFL_SRC}" && get_afl)
+        export AFL_REVISION="$("${AFL_SRC}/afl-fuzz" \
+          | grep "afl-fuzz.*by" \
+          | cut -d " " -f 2 \
+          | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")"
+      fi
+      ;;
     libfuzzer)
       if [[ ! -d "${LIBFUZZER_SRC}/standalone" ]]; then
         echo "Checking out libFuzzer"
@@ -175,8 +192,15 @@ build_benchmark() {
   rm -rf "${building_dir}"
   mkdir "${building_dir}"
 
+  local engine=$(. ${fengine_config}; echo "$FUZZING_ENGINE")
+
   local build_cmd=". ${fengine_config} && ${WORK}/FTS/${benchmark}/build.sh"
   (cd "${building_dir}" && exec_in_clean_env "${build_cmd}")
+
+  if [[ "$engine" == "qsym" ]]; then
+    # Also perform an afl build as part of qsym
+    (cd "${building_dir}" && exec_in_clean_env "FUZZING_ENGINE=afl ${WORK}/FTS/${benchmark}/build.sh")
+  fi
 }
 
 package_benchmark_fuzzer() {
@@ -211,6 +235,10 @@ package_benchmark_fuzzer() {
     cp "${building_dir}"/*.dict "${send_dir}"
 
   [[ "${FUZZING_ENGINE}" == "afl" ]] && cp "${AFL_SRC}/afl-fuzz" "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "qsym" ]] && cp "${AFL_SRC}/afl-fuzz" "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "qsym" ]] && cp "${AFL_SRC}/afl-showmap" "${send_dir}"
+  [[ "${FUZZING_ENGINE}" == "qsym" ]] && cp "${building_dir}/${fuzzer_name/qsym/afl}" \
+    "${send_dir}/${benchmark}${fuzzer_suffix}-${FUZZING_ENGINE/qsym/afl}"
 }
 
 # Starts a runner VM
@@ -222,8 +250,12 @@ create_or_start_runner() {
   {
     echo "#!/bin/bash"
     echo "while ! docker run --rm -e INSTANCE_NAME=${instance_name} \\"
-    echo "  --cap-add SYS_PTRACE --name=runner-container \\"
-    echo "  gcr.io/fuzzer-test-suite/runner /work/startup-runner.sh"
+    echo "  --cap-add SYS_PTRACE --privileged --name=runner-container \\"
+    if [[ "${FUZZING_ENGINE}" == "qsym" ]]; then
+      echo "  gcr.io/fuzzer-evaluator/runner-image-qsym /work/startup-runner.sh"
+    else
+      echo "  gcr.io/fuzzer-test-suite/runner /work/startup-runner.sh"
+    fi
     echo "do"
     echo "  echo 'Error pulling image, retrying...'"
     echo "done 2>&1 | tee /tmp/runner-log.txt"

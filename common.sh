@@ -1,13 +1,14 @@
 #!/bin/bash
 # Copyright 2017 Google Inc. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
+set -x
 
 # Don't allow to call these scripts from their directories.
 [ -e $(basename $0) ] && echo "PLEASE USE THIS SCRIPT FROM ANOTHER DIR" && exit 1
 
 # Ensure that fuzzing engine, if defined, is valid
 FUZZING_ENGINE=${FUZZING_ENGINE:-"fsanitize_fuzzer"}
-POSSIBLE_FUZZING_ENGINE="libfuzzer afl coverage fsanitize_fuzzer hooks"
+POSSIBLE_FUZZING_ENGINE="libfuzzer afl coverage fsanitize_fuzzer hooks qsym"
 !(echo "$POSSIBLE_FUZZING_ENGINE" | grep -w "$FUZZING_ENGINE" > /dev/null) && \
   echo "USAGE: Error: If defined, FUZZING_ENGINE should be one of the following:
   $POSSIBLE_FUZZING_ENGINE. However, it was defined as $FUZZING_ENGINE" && exit 1
@@ -34,6 +35,10 @@ if [[ $FUZZING_ENGINE == "fsanitize_fuzzer" ]]; then
 elif [[ $FUZZING_ENGINE == "coverage" ]]; then
   export CFLAGS=${CFLAGS:-$COVERAGE_FLAGS}
   export CXXFLAGS=${CXXFLAGS:-$COVERAGE_FLAGS}
+elif [[ $FUZZING_ENGINE == "qsym" ]]; then
+  FSANITIZE_FUZZER_FLAGS="-O2 -fno-omit-frame-pointer -gline-tables-only"
+  export CFLAGS=${CFLAGS:-$FSANITIZE_FUZZER_FLAGS}
+  export CXXFLAGS=${CXXFLAGS:-$FSANITIZE_FUZZER_FLAGS}
 else
   export CFLAGS=${CFLAGS:-"$FUZZ_CXXFLAGS"}
   export CXXFLAGS=${CXXFLAGS:-"$FUZZ_CXXFLAGS"}
@@ -61,6 +66,13 @@ get_svn_revision() {
 }
 
 build_afl() {
+  $CC $CFLAGS -c -w $AFL_SRC/llvm_mode/afl-llvm-rt.o.c
+  $CXX $CXXFLAGS -std=c++11 -O2 -c ${LIBFUZZER_SRC}/afl/afl_driver.cpp -I$LIBFUZZER_SRC
+  ar r $LIB_FUZZING_ENGINE afl_driver.o afl-llvm-rt.o.o
+  rm *.o
+}
+
+build_qsym() {
   $CC $CFLAGS -c -w $AFL_SRC/llvm_mode/afl-llvm-rt.o.c
   $CXX $CXXFLAGS -std=c++11 -O2 -c ${LIBFUZZER_SRC}/afl/afl_driver.cpp -I$LIBFUZZER_SRC
   ar r $LIB_FUZZING_ENGINE afl_driver.o afl-llvm-rt.o.o
